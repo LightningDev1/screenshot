@@ -14,9 +14,22 @@ func ScreenRect() (image.Rectangle, error) {
 		return image.Rectangle{}, fmt.Errorf("Could not Get primary display err:%d\n", GetLastError())
 	}
 	defer ReleaseDC(0, hDC)
-	x := GetDeviceCaps(hDC, DESKTOPHORZRES)
-	y := GetDeviceCaps(hDC, DESKTOPVERTRES)
-	return image.Rect(0, 0, x, y), nil
+
+	var all image.Rectangle
+
+	getMonitorRectCallback := func(_ uintptr, _ HDC, lprcMonitor *RECT, _ uintptr) uintptr {
+		rect := image.Rect(
+			int(lprcMonitor.Left), int(lprcMonitor.Top),
+			int(lprcMonitor.Right), int(lprcMonitor.Bottom))
+
+		all = all.Union(rect)
+
+		return uintptr(1)
+	}
+
+	EnumDisplayMonitors(0, nil, syscall.NewCallback(getMonitorRectCallback), 0)
+
+	return all, nil
 }
 
 func CaptureScreen() (*image.RGBA, error) {
@@ -86,7 +99,7 @@ func CaptureRect(rect image.Rectangle) (*image.RGBA, error) {
 		imageBytes[i], imageBytes[i+2], imageBytes[i+1], imageBytes[i+3] = slice[i+2], slice[i], slice[i+1], slice[i+3]
 	}
 
-	img := &image.RGBA{imageBytes, 4 * x, image.Rect(0, 0, x, y)}
+	img := &image.RGBA{Pix: imageBytes, Stride: 4 * x, Rect: image.Rect(0, 0, x, y)}
 	return img, nil
 }
 
@@ -96,6 +109,16 @@ func GetDeviceCaps(hdc HDC, index int) int {
 		uintptr(index))
 
 	return int(ret)
+}
+
+func EnumDisplayMonitors(hdc HDC, lprcClip *RECT, lpfnEnum uintptr, dwData uintptr) bool {
+	ret, _, _ := procEnumDisplayMonitors.Call(
+		uintptr(hdc),
+		uintptr(unsafe.Pointer(lprcClip)),
+		lpfnEnum,
+		dwData)
+
+	return ret != 0
 }
 
 func GetDC(hwnd HWND) HDC {
@@ -216,6 +239,10 @@ type RGBQUAD struct {
 	RgbReserved byte
 }
 
+type RECT struct {
+	Left, Top, Right, Bottom int32
+}
+
 const (
 	HORZRES          = 8
 	VERTRES          = 10
@@ -228,17 +255,18 @@ const (
 )
 
 var (
-	modgdi32               = syscall.NewLazyDLL("gdi32.dll")
-	moduser32              = syscall.NewLazyDLL("user32.dll")
-	modkernel32            = syscall.NewLazyDLL("kernel32.dll")
-	procGetDC              = moduser32.NewProc("GetDC")
-	procReleaseDC          = moduser32.NewProc("ReleaseDC")
-	procDeleteDC           = modgdi32.NewProc("DeleteDC")
-	procBitBlt             = modgdi32.NewProc("BitBlt")
-	procDeleteObject       = modgdi32.NewProc("DeleteObject")
-	procSelectObject       = modgdi32.NewProc("SelectObject")
-	procCreateDIBSection   = modgdi32.NewProc("CreateDIBSection")
-	procCreateCompatibleDC = modgdi32.NewProc("CreateCompatibleDC")
-	procGetDeviceCaps      = modgdi32.NewProc("GetDeviceCaps")
-	procGetLastError       = modkernel32.NewProc("GetLastError")
+	modgdi32                = syscall.NewLazyDLL("gdi32.dll")
+	moduser32               = syscall.NewLazyDLL("user32.dll")
+	modkernel32             = syscall.NewLazyDLL("kernel32.dll")
+	procGetDC               = moduser32.NewProc("GetDC")
+	procReleaseDC           = moduser32.NewProc("ReleaseDC")
+	procDeleteDC            = modgdi32.NewProc("DeleteDC")
+	procBitBlt              = modgdi32.NewProc("BitBlt")
+	procDeleteObject        = modgdi32.NewProc("DeleteObject")
+	procSelectObject        = modgdi32.NewProc("SelectObject")
+	procCreateDIBSection    = modgdi32.NewProc("CreateDIBSection")
+	procCreateCompatibleDC  = modgdi32.NewProc("CreateCompatibleDC")
+	procEnumDisplayMonitors = moduser32.NewProc("EnumDisplayMonitors")
+	procGetDeviceCaps       = modgdi32.NewProc("GetDeviceCaps")
+	procGetLastError        = modkernel32.NewProc("GetLastError")
 )
